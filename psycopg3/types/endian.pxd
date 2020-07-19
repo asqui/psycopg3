@@ -4,7 +4,7 @@
 from libc.stdint cimport uint16_t, uint32_t, uint64_t
 
 
-cdef extern from "<endian.h>" nogil:
+cdef extern from "endian.h" nogil:
 
     cdef uint16_t htobe16(uint16_t host_16bits)
     cdef uint16_t htole16(uint16_t host_16bits)
