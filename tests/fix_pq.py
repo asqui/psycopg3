@@ -36,7 +36,7 @@ def libpq():
     """Return a ctypes wrapper to access the libpq."""
     import ctypes.util
 
-    libname = ctypes.util.find_library("pq")
+    libname = ctypes.util.find_library("libpq.dll")
     return ctypes.pydll.LoadLibrary(libname)
 
 
