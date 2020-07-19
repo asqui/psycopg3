@@ -12,7 +12,7 @@ from typing import List, Tuple
 
 from psycopg3.errors import NotSupportedError
 
-libname = ctypes.util.find_library("pq")
+libname = ctypes.util.find_library("libpq.dll")
 if libname is None:
     raise ImportError("libpq library not found")
 
