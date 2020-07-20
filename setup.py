@@ -109,7 +109,7 @@ setup(
         "Issue Tracker": "https://github.com/psycopg/psycopg3/issues",
         "Download": "https://pypi.org/project/psycopg3/",
     },
-    cmdclass={"build_ext": psycopg3_build_ext},
+    # cmdclass={"build_ext": psycopg3_build_ext},
     # hack to run build_ext. It will be replaced by real the stuff
-    ext_modules=[Extension("psycopg3.dummy", ["dummy.c"])],
+    # ext_modules=[Extension("psycopg3.dummy", ["dummy.c"])],
 )
