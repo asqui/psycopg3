@@ -6,6 +6,7 @@ psycopg3 -- PostgreSQL database adapter for Python
 
 from . import pq
 from .connection import AsyncConnection, Connection
+from .transaction import Rollback
 
 from .errors import (
     Warning,
@@ -47,7 +48,7 @@ __all__ = (
     ["Warning", "Error", "InterfaceError", "DatabaseError", "DataError"]
     + ["OperationalError", "IntegrityError", "InternalError"]
     + ["ProgrammingError", "NotSupportedError"]
-    + ["AsyncConnection", "Connection", "connect"]
+    + ["AsyncConnection", "Connection", "connect", "Rollback"]
     + ["BINARY", "DATETIME", "NUMBER", "ROWID", "STRING"]
     + ["Binary", "Date", "DateFromTicks", "Time", "TimeFromTicks"]
     + ["Timestamp", "TimestampFromTicks"]

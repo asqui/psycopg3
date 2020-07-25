@@ -19,6 +19,7 @@ from . import cursor
 from . import proto
 from .pq import TransactionStatus, ExecStatus
 from .conninfo import make_conninfo
+from .transaction import Transaction
 from .waiting import wait, wait_async
 from .generators import notifies
 
@@ -86,6 +87,11 @@ class BaseConnection:
         # name of the postgres encoding (in bytes)
         self._pgenc = b""
 
+        # stack of savepoint names managed by active Transaction() blocks
+        self._savepoints: Optional[List[bytes]] = None
+        # (None when there no active Transaction blocks; [] when there is only
+        # one Transaction block, with a top-level transaction and no savepoint)
+
         wself = ref(self)
 
         pgconn.notice_handler = partial(BaseConnection._notice_handler, wself)
@@ -112,10 +118,18 @@ class BaseConnection:
         # subclasses must call it holding a lock
         status = self.pgconn.transaction_status
         if status != TransactionStatus.IDLE:
-            raise e.ProgrammingError(
-                "couldn't change autocommit state: connection in"
-                f" transaction status {TransactionStatus(status).name}"
-            )
+            if self._savepoints is not None:
+                raise e.ProgrammingError(
+                    "couldn't change autocommit state: "
+                    "connection.transaction() context in progress"
+                )
+            else:
+                raise e.ProgrammingError(
+                    "couldn't change autocommit state: "
+                    "connection in transaction status "
+                    f"{TransactionStatus(status).name}"
+                )
+
         self._autocommit = value
 
     def cursor(
@@ -256,28 +270,35 @@ class Connection(BaseConnection):
         if self.pgconn.transaction_status != TransactionStatus.IDLE:
             return
 
-        self.pgconn.send_query(b"begin")
-        (pgres,) = self.wait(execute(self.pgconn))
-        if pgres.status != ExecStatus.COMMAND_OK:
-            raise e.OperationalError(
-                "error on begin:"
-                f" {pq.error_message(pgres, encoding=self.codec.name)}"
-            )
+        self._exec_command(b"begin")
 
     def commit(self) -> None:
         with self.lock:
-            self._exec_commit_rollback(b"commit")
+            if self._savepoints is not None:
+                raise e.ProgrammingError(
+                    "Explicit commit() forbidden within a Transaction "
+                    "context. (Transaction will be automatically committed "
+                    "on successful exit from context.)"
+                )
+            if self.pgconn.transaction_status == TransactionStatus.IDLE:
+                return
+            self._exec_command(b"commit")
 
     def rollback(self) -> None:
         with self.lock:
-            self._exec_commit_rollback(b"rollback")
+            if self._savepoints is not None:
+                raise e.ProgrammingError(
+                    "Explicit rollback() forbidden within a Transaction "
+                    "context. (Either raise Transaction.Rollback() or allow "
+                    "an exception to propagate out of the context.)"
+                )
+            if self.pgconn.transaction_status == TransactionStatus.IDLE:
+                return
+            self._exec_command(b"rollback")
 
-    def _exec_commit_rollback(self, command: bytes) -> None:
+    def _exec_command(self, command: bytes) -> None:
         # Caller must hold self.lock
-        status = self.pgconn.transaction_status
-        if status == TransactionStatus.IDLE:
-            return
-
+        logger.debug(f"{self}: {command!r}")
         self.pgconn.send_query(command)
         results = self.wait(execute(self.pgconn))
         if results[-1].status != ExecStatus.COMMAND_OK:
@@ -285,6 +306,13 @@ class Connection(BaseConnection):
                 f"error on {command.decode('utf8')}:"
                 f" {pq.error_message(results[-1], encoding=self.codec.name)}"
             )
+
+    def transaction(
+        self,
+        savepoint_name: Optional[str] = None,
+        force_rollback: bool = False,
+    ) -> Transaction:
+        return Transaction(self, savepoint_name, force_rollback)
 
     @classmethod
     def wait(
@@ -380,18 +408,18 @@ class AsyncConnection(BaseConnection):
 
     async def commit(self) -> None:
         async with self.lock:
-            await self._exec_commit_rollback(b"commit")
+            if self.pgconn.transaction_status == TransactionStatus.IDLE:
+                return
+            await self._exec(b"commit")
 
     async def rollback(self) -> None:
         async with self.lock:
-            await self._exec_commit_rollback(b"rollback")
+            if self.pgconn.transaction_status == TransactionStatus.IDLE:
+                return
+            await self._exec(b"rollback")
 
-    async def _exec_commit_rollback(self, command: bytes) -> None:
+    async def _exec(self, command: bytes) -> None:
         # Caller must hold self.lock
-        status = self.pgconn.transaction_status
-        if status == TransactionStatus.IDLE:
-            return
-
         self.pgconn.send_query(command)
         (pgres,) = await self.wait(execute(self.pgconn))
         if pgres.status != ExecStatus.COMMAND_OK:
