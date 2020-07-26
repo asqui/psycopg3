@@ -34,7 +34,7 @@ cdef void *get_context_text(object loader):
     cdef TextContext *rv = <TextContext *>PyMem_Malloc(sizeof(TextContext))
     rv.pydecoder = <PyObject *>loader.decode
 
-    if loader.connection is None or loader.connection.encoding == "UTF8":
+    if loader.connection is None or loader.connection.client_encoding == "UTF8":
         rv.is_utf8 = 1
     else:
         rv.is_utf8 = 0

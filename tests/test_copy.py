@@ -180,7 +180,7 @@ def test_copy_in_allchars(conn):
     cur = conn.cursor()
     ensure_table(cur, sample_tabledef)
 
-    conn.set_client_encoding("utf8")
+    conn.client_encoding = "utf8"
     with cur.copy("copy copy_in from stdin (format text)") as copy:
         for i in range(1, 256):
             copy.write_row((i, None, chr(i)))
@@ -198,20 +198,3 @@ from copy_in group by 1, 2, 3
 def ensure_table(cur, tabledef, name="copy_in"):
     cur.execute(f"drop table if exists {name}")
     cur.execute(f"create table {name} ({tabledef})")
-
-
-def as_bytes(records):
-    out = []
-    for rin in records:
-        rout = []
-        for v in rin:
-            if v is None or isinstance(v, bytes):
-                rout.append(v)
-                continue
-            if not isinstance(v, str):
-                v = str(v)
-            if isinstance(v, str):
-                v = v.encode("utf8")
-            rout.append(v)
-        out.append(tuple(rout))
-    return out

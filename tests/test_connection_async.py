@@ -120,7 +120,11 @@ async def test_auto_transaction_fail(aconn):
 
 async def test_autocommit(aconn):
     assert aconn.autocommit is False
-    aconn.autocommit = True
+    with pytest.raises(AttributeError):
+        aconn.autocommit = True
+    assert not aconn.autocommit
+
+    await aconn.set_autocommit(True)
     assert aconn.autocommit
     cur = aconn.cursor()
     await cur.execute("select 1")
@@ -139,7 +143,7 @@ async def test_autocommit_intrans(aconn):
     assert await cur.fetchone() == (1,)
     assert aconn.pgconn.transaction_status == aconn.TransactionStatus.INTRANS
     with pytest.raises(psycopg3.ProgrammingError):
-        aconn.autocommit = True
+        await aconn.set_autocommit(True)
     assert not aconn.autocommit
 
 
@@ -149,7 +153,7 @@ async def test_autocommit_inerror(aconn):
         await cur.execute("meh")
     assert aconn.pgconn.transaction_status == aconn.TransactionStatus.INERROR
     with pytest.raises(psycopg3.ProgrammingError):
-        aconn.autocommit = True
+        await aconn.set_autocommit(True)
     assert not aconn.autocommit
 
 
@@ -157,7 +161,7 @@ async def test_autocommit_unknown(aconn):
     await aconn.close()
     assert aconn.pgconn.transaction_status == aconn.TransactionStatus.UNKNOWN
     with pytest.raises(psycopg3.ProgrammingError):
-        aconn.autocommit = True
+        await aconn.set_autocommit(True)
     assert not aconn.autocommit
 
 
@@ -165,14 +169,17 @@ async def test_get_encoding(aconn):
     cur = aconn.cursor()
     await cur.execute("show client_encoding")
     (enc,) = await cur.fetchone()
-    assert enc == aconn.encoding
+    assert enc == aconn.client_encoding
 
 
 async def test_set_encoding(aconn):
-    newenc = "LATIN1" if aconn.encoding != "LATIN1" else "UTF8"
-    assert aconn.encoding != newenc
+    newenc = "LATIN1" if aconn.client_encoding != "LATIN1" else "UTF8"
+    assert aconn.client_encoding != newenc
+    with pytest.raises(AttributeError):
+        aconn.client_encoding = newenc
+    assert aconn.client_encoding != newenc
     await aconn.set_client_encoding(newenc)
-    assert aconn.encoding == newenc
+    assert aconn.client_encoding == newenc
     cur = aconn.cursor()
     await cur.execute("show client_encoding")
     (enc,) = await cur.fetchone()
@@ -191,7 +198,7 @@ async def test_set_encoding(aconn):
 )
 async def test_normalize_encoding(aconn, enc, out, codec):
     await aconn.set_client_encoding(enc)
-    assert aconn.encoding == out
+    assert aconn.client_encoding == out
     assert aconn.codec.name == codec
 
 
@@ -208,7 +215,7 @@ async def test_normalize_encoding(aconn, enc, out, codec):
 async def test_encoding_env_var(dsn, monkeypatch, enc, out, codec):
     monkeypatch.setenv("PGCLIENTENCODING", enc)
     aconn = await psycopg3.AsyncConnection.connect(dsn)
-    assert aconn.encoding == out
+    assert aconn.client_encoding == out
     assert aconn.codec.name == codec
 
 
@@ -326,7 +333,7 @@ async def test_notify_handlers(aconn):
     aconn.add_notify_handler(cb1)
     aconn.add_notify_handler(lambda n: nots2.append(n))
 
-    aconn.autocommit = True
+    await aconn.set_autocommit(True)
     cur = aconn.cursor()
     await cur.execute("listen foo")
     await cur.execute("notify foo, 'n1'")
