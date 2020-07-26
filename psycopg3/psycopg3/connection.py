@@ -15,7 +15,6 @@ from typing import (
     Generator,
     List,
     NamedTuple,
-    Union,
 )
 from typing import Optional, Type, cast
 from weakref import ref, ReferenceType
@@ -96,7 +95,7 @@ class BaseConnection:
         self._pgenc = b""
         # stack of savepoint names managed by active Transaction() blocks
         # (The first item may be None, representing an outer transaction)
-        self._savepoints: List[Union[None, str]] = []
+        self._savepoints: List[Optional[str]] = []
 
         wself = ref(self)
 
@@ -308,7 +307,7 @@ class Connection(BaseConnection):
                 f" {pq.error_message(results[-1], encoding=self.codec.name)}"
             )
 
-    def transaction(self):
+    def transaction(self) -> Transaction:
         return Transaction(self)
 
     @classmethod
