@@ -27,13 +27,15 @@ class Transaction:
     def __enter__(self) -> None:
         with self._conn.lock:
             if self._conn.pgconn.transaction_status == TransactionStatus.IDLE:
+                assert self._conn._savepoints is None
+                self._conn._savepoints = []
                 self._outer_transaction = True
                 self._savepoint_name = None
 
                 self._conn._exec_command(b"begin")
-                assert len(self._conn._savepoints) == 0
-                self._conn._savepoints.append(None)
             else:
+                if self._conn._savepoints is None:
+                    self._conn._savepoints = []
                 self._outer_transaction = False
                 self._savepoint_name = b"tx_savepoint_%i" % (
                     len(self._conn._savepoints) + 1
@@ -57,10 +59,10 @@ class Transaction:
                         b"release savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
-                    self._conn._savepoints.pop()
                     # TODO: Add test for this assert
-                    # assert self._conn._savepoints.pop() is None
+                    # assert len(self._conn._savepoints) == 0
                     self._conn._exec_command(b"commit")
+                    self._conn._savepoints = None
             else:
                 if self._savepoint_name:
                     self._conn._savepoints.pop()
@@ -70,7 +72,7 @@ class Transaction:
                         b"rollback to savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
-                    self._conn._savepoints.pop()
                     # TODO: Add test for this assert
-                    # assert self._conn._savepoints.pop() is None
+                    # assert len(self._conn._savepoints) == 0
                     self._conn._exec_command(b"rollback")
+                    self._conn._savepoints = None
