@@ -1,6 +1,5 @@
 import gc
-import re
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 
 import pytest
 import logging
@@ -363,23 +362,11 @@ def test_transaction(conn):
 
 
 def test_transaction_exposes_associated_connection(conn):
-    """Transaction exposes it's connection as a read-only property."""
+    """Transaction exposes its connection as a read-only property."""
     tx = conn.transaction()
     assert tx.connection is conn
     with pytest.raises(AttributeError):
         tx.connection = conn
-
-
-def test_transaction_is_not_kept_alive_by_connection(conn):
-    """
-    Since the Transaction has a reference back to the connection, ensure that
-    the opposite is not also true, as we want to avoid reference cycles.
-    """
-    tx = conn.transaction()
-    weak_tx = weakref.ref(tx)
-    del tx
-    gc.collect()
-    assert weak_tx() is None
 
 
 def test_transaction_begins_on_enter(conn):
@@ -424,26 +411,11 @@ def test_transaction_prohibits_use_of_commit_rollback_autocommit(conn):
     conn.rollback()
 
     with conn.transaction():
-        message = re.escape(
-            "can't change autocommit state when in Transaction context"
-        )
-        with pytest.raises(psycopg3.ProgrammingError, match=f"^{message}$"):
+        with pytest.raises(psycopg3.ProgrammingError):
             conn.autocommit = False
-
-        message = re.escape(
-            "Explicit commit() forbidden within a Transaction context."
-            " (Transaction will be automatically committed on successful exit"
-            " from context.)"
-        )
-        with pytest.raises(psycopg3.ProgrammingError, match=f"^{message}$"):
+        with pytest.raises(psycopg3.ProgrammingError):
             conn.commit()
-
-        message = re.escape(
-            "Explicit rollback() forbidden within a Transaction context. "
-            "(Either raise Transaction.Rollback() or allow an exception to "
-            "propagate out of the context.)"
-        )
-        with pytest.raises(psycopg3.ProgrammingError, match=f"^{message}$"):
+        with pytest.raises(psycopg3.ProgrammingError):
             conn.rollback()
 
     conn.autocommit = False
@@ -451,83 +423,114 @@ def test_transaction_prohibits_use_of_commit_rollback_autocommit(conn):
     conn.rollback()
 
 
-@contextmanager
-def _transaction(conn, exception):
-    """
-    Context manager does things in a conn.transaction() and then optionally
-    exits the context manager with an exception.
-    """
-    with pytest.raises(ExpectedException) if exception else nullcontext():
-        with conn.transaction():
-            yield
-            if exception:
-                raise ExpectedException()
-
-
-@pytest.mark.parametrize("exception", [False, True])
 @pytest.mark.parametrize("autocommit", [False, True])
-def test_transaction_preserves_autocommit(conn, autocommit, exception):
+def test_transaction_preserves_autocommit(conn, autocommit):
     """
-    Connection.autocommit value is False in Transaction block, but the original
-    value is always restored after the block exits, both in successful exit and
-    exception scenarios.
+    Connection.autocommit is unchanged both during and after Transaction block.
     """
     conn.autocommit = autocommit
-    with _transaction(conn, exception):
-        assert conn.autocommit is False
+    with conn.transaction():
+        assert conn.autocommit is autocommit
     assert conn.autocommit is autocommit
 
 
-@pytest.mark.parametrize("exception", [False, True])
-def test_transaction_autocommit_off_but_no_transaction_started(
-    temp_table, conn, svcconn, exception
+def test_transaction_autocommit_off_but_no_transaction_started_successful_exit(
+    temp_table, conn, svcconn
 ):
     """
-    When connection has autocommit off but no transaction has been initiated
-    before entering the Transaction context:
-     * successful exit from the context will commit changes
-     * exiting the context with an exception will discard changes
+    Scenario:
+    * Connection has autocommit off but no transaction has been initiated
+      before entering the Transaction context
+    * Code exits Transaction context successfully
+
+    Outcome:
+    * Changes made within Transaction context are committed
     """
     conn.autocommit = False
     assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
-    with _transaction(conn, exception):
+    with conn.transaction():
         insert_row(conn, "new")
     assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
-    assert conn.autocommit is False
-    if exception:
-        # Changes discarded
-        assert_rows(conn, set())
-        assert_rows(svcconn, set())
-    else:
-        # Changes committed
-        assert_rows(conn, {"new"})
-        assert_rows(svcconn, {"new"})
+
+    # Changes committed
+    assert_rows(conn, {"new"})
+    assert_rows(svcconn, {"new"})
 
 
-@pytest.mark.parametrize("exception", [False, True])
-def test_transaction_autocommit_off_and_transaction_in_progress(
-    temp_table, conn, svcconn, exception
+def test_transaction_autocommit_off_but_no_transaction_started_exception_exit(
+    temp_table, conn, svcconn, exception=True
 ):
     """
-    When connection has autocommit off and a transaction is already in progress
-    before entering the Transaction context:
-     * successful exit from the context will leave changes made in the context
-     * exiting the context with an exception will discard changes made within
-       the context (but leave changes made prior to entering the context)
-    In both cases, the original outer transaction is left running, and no
-    changes are visible to an outside observer from another connection.
+    Scenario:
+    * Connection has autocommit off but no transaction has been initiated
+      before entering the Transaction context
+    * Code exits Transaction context with an exception
+
+    Outcome:
+    * Changes made within Transaction context are discarded
+    """
+    conn.autocommit = False
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    with pytest.raises(ExpectedException):
+        with conn.transaction():
+            insert_row(conn, "new")
+            raise ExpectedException()
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+
+    # Changes discarded
+    assert_rows(conn, set())
+    assert_rows(svcconn, set())
+
+
+def test_transaction_autocommit_off_and_transaction_in_progress_successful_exit(
+    temp_table, conn, svcconn
+):
+    """
+    Scenario:
+    * Connection has autocommit off but and a transaction is already in
+      progress before entering the Transaction context
+    * Code exits Transaction context successfully
+
+    Outcome:
+    * Changes made within Transaction context are left intact
+    * Outer transaction is left running, and no changes are visible to an
+      outside observer from another connection.
     """
     conn.autocommit = False
     insert_row(conn, "prior")
     assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
-    with _transaction(conn, exception):
+    with conn.transaction():
         insert_row(conn, "new")
     assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
-    assert conn.autocommit is False
-    if exception:
-        assert_rows(conn, {"prior"}, still_in_transaction=True)
-    else:
-        assert_rows(conn, {"prior", "new"}, still_in_transaction=True)
+    assert_rows(conn, {"prior", "new"})
+    # Nothing committed yet; changes not visible on another connection
+    assert_rows(svcconn, set())
+
+
+def test_transaction_autocommit_off_and_transaction_in_progress_exception_exit(
+    temp_table, conn, svcconn
+):
+    """
+    Scenario:
+    * Connection has autocommit off but and a transaction is already in
+      progress before entering the Transaction context
+    * Code exits Transaction context with an exception
+
+    Outcome:
+    * Changes made before the Transaction context are left intact
+    * Changes made within Transaction context are discarded
+    * Outer transaction is left running, and no changes are visible to an
+      outside observer from another connection.
+    """
+    conn.autocommit = False
+    insert_row(conn, "prior")
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+    with pytest.raises(ExpectedException):
+        with conn.transaction():
+            insert_row(conn, "new")
+            raise ExpectedException()
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+    assert_rows(conn, {"prior"})
     # Nothing committed yet; changes not visible on another connection
     assert_rows(svcconn, set())
 
@@ -541,6 +544,7 @@ def test_transaction_nested_all_changes_persisted_on_successful_exit(
         with conn.transaction():
             insert_row(conn, "inner")
         insert_row(conn, "outer-after")
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
     assert_rows(conn, {"outer-before", "inner", "outer-after"})
     assert_rows(svcconn, {"outer-before", "inner", "outer-after"})
 
@@ -558,6 +562,7 @@ def test_transaction_nested_all_changes_discarded_on_outer_exception(
             with conn.transaction():
                 insert_row(conn, "inner")
             raise ExpectedException()
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
     assert_rows(conn, set())
     assert_rows(svcconn, set())
 
@@ -575,6 +580,7 @@ def test_transaction_nested_all_changes_discarded_on_inner_exception(
             with conn.transaction():
                 insert_row(conn, "inner")
                 raise ExpectedException()
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
     assert_rows(conn, set())
     assert_rows(svcconn, set())
 
@@ -595,6 +601,7 @@ def test_transaction_nested_inner_scope_exception_handled_in_outer_scope(
                 insert_row(conn, "inner")
                 raise ExpectedException()
         insert_row(conn, "outer-after")
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
     assert_rows(conn, {"outer-before", "outer-after"})
     assert_rows(svcconn, {"outer-before", "outer-after"})
 
@@ -603,12 +610,7 @@ def insert_row(conn, value):
     conn.cursor().execute("INSERT INTO temp_table VALUES (%s)", (value,))
 
 
-def assert_rows(conn, expected, still_in_transaction=False):
-    if still_in_transaction:
-        assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
-    else:
-        assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
-
+def assert_rows(conn, expected):
     rows = conn.cursor().execute("SELECT * FROM temp_table").fetchall()
     assert set(v for (v,) in rows) == expected
 

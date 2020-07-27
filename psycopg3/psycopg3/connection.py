@@ -8,14 +8,7 @@ import codecs
 import logging
 import asyncio
 import threading
-from typing import (
-    Any,
-    AsyncGenerator,
-    Callable,
-    Generator,
-    List,
-    NamedTuple,
-)
+from typing import Any, AsyncGenerator, Callable, Generator, List, NamedTuple
 from typing import Optional, Type, cast
 from weakref import ref, ReferenceType
 from functools import partial
@@ -121,16 +114,20 @@ class BaseConnection:
     def _set_autocommit(self, value: bool) -> None:
         # Base implementation, not thread safe
         # subclasses must call it holding a lock
-        if len(self._savepoints) > 0:
-            raise e.ProgrammingError(
-                "can't change autocommit state when in Transaction context"
-            )
         status = self.pgconn.transaction_status
         if status != TransactionStatus.IDLE:
-            raise e.ProgrammingError(
-                "couldn't change autocommit state: connection in"
-                f" transaction status {TransactionStatus(status).name}"
-            )
+            if len(self._savepoints) > 0:
+                raise e.ProgrammingError(
+                    "couldn't change autocommit state: "
+                    "connection.transaction() context in progress"
+                )
+            else:
+                raise e.ProgrammingError(
+                    "couldn't change autocommit state: "
+                    "connection in transaction status "
+                    f"{TransactionStatus(status).name}"
+                )
+
         self._autocommit = value
 
     def cursor(
@@ -271,7 +268,7 @@ class Connection(BaseConnection):
         if self.pgconn.transaction_status != TransactionStatus.IDLE:
             return
 
-        self._exec(b"begin")
+        self._exec_command(b"begin")
 
     def commit(self) -> None:
         with self.lock:
@@ -283,7 +280,7 @@ class Connection(BaseConnection):
                 )
             if self.pgconn.transaction_status == TransactionStatus.IDLE:
                 return
-            self._exec(b"commit")
+            self._exec_command(b"commit")
 
     def rollback(self) -> None:
         with self.lock:
@@ -295,9 +292,9 @@ class Connection(BaseConnection):
                 )
             if self.pgconn.transaction_status == TransactionStatus.IDLE:
                 return
-            self._exec(b"rollback")
+            self._exec_command(b"rollback")
 
-    def _exec(self, command: bytes) -> None:
+    def _exec_command(self, command: bytes) -> None:
         # Caller must hold self.lock
         self.pgconn.send_query(command)
         results = self.wait(execute(self.pgconn))
