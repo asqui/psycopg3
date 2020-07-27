@@ -606,6 +606,20 @@ def test_transaction_nested_inner_scope_exception_handled_in_outer_scope(
     assert_rows(svcconn, {"outer-before", "outer-after"})
 
 
+def test_transaction_nested_three_levels_successful_exit(
+    temp_table, conn, svcconn
+):
+    with conn.transaction():
+        insert_row(conn, "one")
+        with conn.transaction():
+            insert_row(conn, "two")
+            with conn.transaction():
+                insert_row(conn, "three")
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_rows(conn, {"one", "two", "three"})
+    assert_rows(svcconn, {"one", "two", "three"})
+
+
 def insert_row(conn, value):
     conn.cursor().execute("INSERT INTO temp_table VALUES (%s)", (value,))
 

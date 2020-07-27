@@ -86,9 +86,11 @@ class BaseConnection:
         self._notify_handlers: List[NotifyHandler] = []
         # name of the postgres encoding (in bytes)
         self._pgenc = b""
+
         # stack of savepoint names managed by active Transaction() blocks
-        # (The first item may be None, representing an outer transaction)
-        self._savepoints: List[Optional[str]] = []
+        self._savepoints: Optional[List[str]] = None
+        # (None when there no active Transaction blocks; [] when there is only
+        # one Transaction block, with a top-level transaction and no savepoint)
 
         wself = ref(self)
 
@@ -116,7 +118,7 @@ class BaseConnection:
         # subclasses must call it holding a lock
         status = self.pgconn.transaction_status
         if status != TransactionStatus.IDLE:
-            if len(self._savepoints) > 0:
+            if self._savepoints is not None:
                 raise e.ProgrammingError(
                     "couldn't change autocommit state: "
                     "connection.transaction() context in progress"
@@ -272,7 +274,7 @@ class Connection(BaseConnection):
 
     def commit(self) -> None:
         with self.lock:
-            if len(self._savepoints) > 0:
+            if self._savepoints is not None:
                 raise e.ProgrammingError(
                     "Explicit commit() forbidden within a Transaction "
                     "context. (Transaction will be automatically committed "
@@ -284,7 +286,7 @@ class Connection(BaseConnection):
 
     def rollback(self) -> None:
         with self.lock:
-            if len(self._savepoints) > 0:
+            if self._savepoints is not None:
                 raise e.ProgrammingError(
                     "Explicit rollback() forbidden within a Transaction "
                     "context. (Either raise Transaction.Rollback() or allow "
