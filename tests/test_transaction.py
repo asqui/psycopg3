@@ -1,6 +1,9 @@
+import logging
+
 import pytest
 
 import psycopg3
+from psycopg3 import transaction
 
 
 @pytest.fixture(autouse=True)
@@ -46,10 +49,18 @@ def test_basic(conn):
 
 def test_exposes_associated_connection(conn):
     """Transaction exposes its connection as a read-only property."""
-    tx = conn.transaction()
-    assert tx.connection is conn
-    with pytest.raises(AttributeError):
-        tx.connection = conn
+    with conn.transaction() as tx:
+        assert tx.connection is conn
+        with pytest.raises(AttributeError):
+            tx.connection = conn
+
+
+def test_exposes_savepoint_name(conn):
+    """Transaction exposes its savepoint name as a read-only property."""
+    with conn.transaction(savepoint_name="foo") as tx:
+        assert tx.savepoint_name == "foo"
+        with pytest.raises(AttributeError):
+            tx.savepoint_name = "bar"
 
 
 def test_begins_on_enter(conn):
@@ -280,12 +291,60 @@ def test_nested_inner_scope_exception_handled_in_outer_scope(conn, svcconn):
 
 
 def test_nested_three_levels_successful_exit(conn, svcconn):
-    with conn.transaction():
+    """Exercise management of more than one savepoint."""
+    with conn.transaction():  # BEGIN
         insert_row(conn, "one")
-        with conn.transaction():
+        with conn.transaction():  # SAVEPOINT tx_savepoint_1
             insert_row(conn, "two")
-            with conn.transaction():
+            with conn.transaction():  # SAVEPOINT tx_savepoint_2
                 insert_row(conn, "three")
     assert_not_in_transaction(conn)
     assert_rows(conn, {"one", "two", "three"})
     assert_rows(svcconn, {"one", "two", "three"})
+
+
+def test_named_savepoints(conn, caplog):
+    """
+    Entering a transaction context will do one of these these things:
+    1. Begin an outer transaction (if one isn't already in progress)
+    2. Begin an outer transaction and create a savepoint (if one is named)
+    3. Create a savepoint (if a transaction is already in progress)
+       either using the name provided, or auto-generating a savepoint name.
+    """
+    with caplog.at_level(logging.DEBUG, logger=transaction._log.name):
+        # Case 1
+        with conn.transaction() as tx:
+            assert tx.savepoint_name is None
+            assert caplog.messages == [f"{conn}: BEGIN"]
+            caplog.clear()
+        assert caplog.messages == [f"{conn}: COMMIT"]
+        caplog.clear()
+
+        # Case 2
+        with conn.transaction(savepoint_name="foo") as tx:
+            assert tx.savepoint_name == "foo"
+            assert caplog.messages == [
+                f"{conn}: BEGIN",
+                f"{conn}: SAVEPOINT foo",
+            ]
+            caplog.clear()
+
+        # Case 3 (with savepoint name provided)
+        with conn.transaction():
+            caplog.clear()
+            with conn.transaction(savepoint_name="bar") as tx:
+                assert tx.savepoint_name == "bar"
+                assert caplog.messages == [
+                    f"{conn}: SAVEPOINT bar",
+                ]
+                caplog.clear()
+
+        # Case 3 (with savepoint name auto-generated)
+        with conn.transaction():
+            caplog.clear()
+            with conn.transaction() as tx:
+                assert tx.savepoint_name == "tx_savepoint_1"
+                assert caplog.messages == [
+                    f"{conn}: SAVEPOINT tx_savepoint_1",
+                ]
+                caplog.clear()
