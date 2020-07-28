@@ -17,10 +17,10 @@ def test_table(svcconn):
 
 def test_basic(conn):
     """Basic use of transaction() to BEGIN and COMMIT a transaction."""
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     with conn.transaction():
-        assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+        assert_in_transaction(conn)
+    assert_not_in_transaction(conn)
 
 
 def test_exposes_associated_connection(conn):
@@ -34,10 +34,10 @@ def test_exposes_associated_connection(conn):
 def test_begins_on_enter(conn):
     """Transaction does not begin until __enter__() is called."""
     tx = conn.transaction()
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     with tx:
-        assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+        assert_in_transaction(conn)
+    assert_not_in_transaction(conn)
 
 
 def test_commit_on_successful_exit(conn):
@@ -45,7 +45,7 @@ def test_commit_on_successful_exit(conn):
     with conn.transaction():
         insert_row(conn, "foo")
 
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, {"foo"})
 
 
@@ -56,7 +56,7 @@ def test_rollback_on_exception_exit(conn):
             insert_row(conn, "foo")
             raise ExpectedException("This discards the insert")
 
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, set())
 
 
@@ -107,10 +107,10 @@ def test_autocommit_off_but_no_transaction_started_successful_exit(
     * Changes made within Transaction context are committed
     """
     conn.autocommit = False
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     with conn.transaction():
         insert_row(conn, "new")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
 
     # Changes committed
     assert_rows(conn, {"new"})
@@ -130,12 +130,12 @@ def test_autocommit_off_but_no_transaction_started_exception_exit(
     * Changes made within Transaction context are discarded
     """
     conn.autocommit = False
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     with pytest.raises(ExpectedException):
         with conn.transaction():
             insert_row(conn, "new")
             raise ExpectedException()
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
 
     # Changes discarded
     assert_rows(conn, set())
@@ -158,10 +158,10 @@ def test_autocommit_off_and_transaction_in_progress_successful_exit(
     """
     conn.autocommit = False
     insert_row(conn, "prior")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+    assert_in_transaction(conn)
     with conn.transaction():
         insert_row(conn, "new")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+    assert_in_transaction(conn)
     assert_rows(conn, {"prior", "new"})
     # Nothing committed yet; changes not visible on another connection
     assert_rows(svcconn, set())
@@ -184,12 +184,12 @@ def test_autocommit_off_and_transaction_in_progress_exception_exit(
     """
     conn.autocommit = False
     insert_row(conn, "prior")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+    assert_in_transaction(conn)
     with pytest.raises(ExpectedException):
         with conn.transaction():
             insert_row(conn, "new")
             raise ExpectedException()
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+    assert_in_transaction(conn)
     assert_rows(conn, {"prior"})
     # Nothing committed yet; changes not visible on another connection
     assert_rows(svcconn, set())
@@ -202,7 +202,7 @@ def test_nested_all_changes_persisted_on_successful_exit(conn, svcconn):
         with conn.transaction():
             insert_row(conn, "inner")
         insert_row(conn, "outer-after")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, {"outer-before", "inner", "outer-after"})
     assert_rows(svcconn, {"outer-before", "inner", "outer-after"})
 
@@ -218,7 +218,7 @@ def test_nested_all_changes_discarded_on_outer_exception(conn, svcconn):
             with conn.transaction():
                 insert_row(conn, "inner")
             raise ExpectedException()
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, set())
     assert_rows(svcconn, set())
 
@@ -234,7 +234,7 @@ def test_nested_all_changes_discarded_on_inner_exception(conn, svcconn):
             with conn.transaction():
                 insert_row(conn, "inner")
                 raise ExpectedException()
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, set())
     assert_rows(svcconn, set())
 
@@ -253,7 +253,7 @@ def test_nested_inner_scope_exception_handled_in_outer_scope(conn, svcconn):
                 insert_row(conn, "inner")
                 raise ExpectedException()
         insert_row(conn, "outer-after")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, {"outer-before", "outer-after"})
     assert_rows(svcconn, {"outer-before", "outer-after"})
 
@@ -265,7 +265,7 @@ def test_nested_three_levels_successful_exit(conn, svcconn):
             insert_row(conn, "two")
             with conn.transaction():
                 insert_row(conn, "three")
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+    assert_not_in_transaction(conn)
     assert_rows(conn, {"one", "two", "three"})
     assert_rows(svcconn, {"one", "two", "three"})
 
