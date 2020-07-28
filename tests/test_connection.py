@@ -1,5 +1,4 @@
 import gc
-
 import pytest
 import logging
 import weakref
@@ -7,11 +6,6 @@ import weakref
 import psycopg3
 from psycopg3 import Connection
 from psycopg3.conninfo import conninfo_to_dict
-
-
-@pytest.fixture
-def table_foo(create_test_table):
-    create_test_table(b"foo", b"id int primary key")
 
 
 def test_connect(dsn):
@@ -51,7 +45,9 @@ def test_weakref(dsn):
     assert w() is None
 
 
-def test_commit(table_foo, conn):
+def test_commit(conn):
+    conn.pgconn.exec_(b"drop table if exists foo")
+    conn.pgconn.exec_(b"create table foo (id int primary key)")
     conn.pgconn.exec_(b"begin")
     assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
     conn.pgconn.exec_(b"insert into foo values (1)")
@@ -65,7 +61,9 @@ def test_commit(table_foo, conn):
         conn.commit()
 
 
-def test_rollback(table_foo, conn):
+def test_rollback(conn):
+    conn.pgconn.exec_(b"drop table if exists foo")
+    conn.pgconn.exec_(b"create table foo (id int primary key)")
     conn.pgconn.exec_(b"begin")
     assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
     conn.pgconn.exec_(b"insert into foo values (1)")
@@ -79,7 +77,10 @@ def test_rollback(table_foo, conn):
         conn.rollback()
 
 
-def test_auto_transaction(table_foo, conn):
+def test_auto_transaction(conn):
+    conn.pgconn.exec_(b"drop table if exists foo")
+    conn.pgconn.exec_(b"create table foo (id int primary key)")
+
     cur = conn.cursor()
     assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
 
@@ -92,7 +93,10 @@ def test_auto_transaction(table_foo, conn):
     assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
 
 
-def test_auto_transaction_fail(table_foo, conn):
+def test_auto_transaction_fail(conn):
+    conn.pgconn.exec_(b"drop table if exists foo")
+    conn.pgconn.exec_(b"create table foo (id int primary key)")
+
     cur = conn.cursor()
     assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
 

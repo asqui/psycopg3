@@ -4,8 +4,15 @@ import psycopg3
 
 
 @pytest.fixture(autouse=True)
-def test_table(create_test_table):
-    create_test_table(b"test_table", b"id text primary key")
+def test_table(svcconn):
+    """
+    Creates a table called 'test_table' for use in tests.
+    """
+    cur = svcconn.cursor()
+    cur.execute("drop table if exists test_table")
+    cur.execute("create table test_table (id text primary key)")
+    yield
+    cur.execute("drop table test_table")
 
 
 def test_basic(conn):
