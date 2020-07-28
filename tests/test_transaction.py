@@ -15,6 +15,27 @@ def test_table(svcconn):
     cur.execute("drop table test_table")
 
 
+def insert_row(conn, value):
+    conn.cursor().execute("INSERT INTO test_table VALUES (%s)", (value,))
+
+
+def assert_rows(conn, expected):
+    rows = conn.cursor().execute("SELECT * FROM test_table").fetchall()
+    assert set(v for (v,) in rows) == expected
+
+
+def assert_not_in_transaction(conn):
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
+
+
+def assert_in_transaction(conn):
+    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
+
+
+class ExpectedException(Exception):
+    pass
+
+
 def test_basic(conn):
     """Basic use of transaction() to BEGIN and COMMIT a transaction."""
     assert_not_in_transaction(conn)
@@ -268,24 +289,3 @@ def test_nested_three_levels_successful_exit(conn, svcconn):
     assert_not_in_transaction(conn)
     assert_rows(conn, {"one", "two", "three"})
     assert_rows(svcconn, {"one", "two", "three"})
-
-
-def insert_row(conn, value):
-    conn.cursor().execute("INSERT INTO test_table VALUES (%s)", (value,))
-
-
-def assert_rows(conn, expected):
-    rows = conn.cursor().execute("SELECT * FROM test_table").fetchall()
-    assert set(v for (v,) in rows) == expected
-
-
-def assert_not_in_transaction(conn):
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.IDLE
-
-
-def assert_in_transaction(conn):
-    assert conn.pgconn.transaction_status == conn.TransactionStatus.INTRANS
-
-
-class ExpectedException(Exception):
-    pass
