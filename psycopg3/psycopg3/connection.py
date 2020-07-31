@@ -306,8 +306,10 @@ class Connection(BaseConnection):
                 f" {pq.error_message(results[-1], encoding=self.codec.name)}"
             )
 
-    def transaction(self, savepoint_name: str = None) -> Transaction:
-        return Transaction(self, savepoint_name)
+    def transaction(
+        self, savepoint_name: str = None, force_rollback: bool = False
+    ) -> Transaction:
+        return Transaction(self, savepoint_name, force_rollback)
 
     @classmethod
     def wait(

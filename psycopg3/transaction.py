@@ -17,13 +17,16 @@ _log = logging.getLogger(__name__)
 
 
 class Transaction:
-    def __init__(self, conn: "Connection", savepoint_name: str) -> None:
+    def __init__(
+        self, conn: "Connection", savepoint_name: str, force_rollback: bool
+    ) -> None:
         self._conn = conn
-        self._outer_transaction = False
         self._savepoint_name: Optional[bytes] = None
         if savepoint_name is not None:
             self._savepoint_name = savepoint_name.encode("ascii")
-            pass
+        self.force_rollback = force_rollback
+
+        self._outer_transaction: bool
 
     @property
     def connection(self) -> "Connection":
@@ -58,10 +61,6 @@ class Transaction:
                 self._conn._savepoints.append(self._savepoint_name)
         return self
 
-    def _log_and_exec_command(self, command: bytes) -> None:
-        _log.debug(f"{self._conn}: {command.decode('ascii')}")
-        self._conn._exec_command(command)
-
     def __exit__(
         self,
         exc_type: Optional[Type[BaseException]],
@@ -69,7 +68,8 @@ class Transaction:
         exc_tb: Optional[TracebackType],
     ) -> None:
         with self._conn.lock:
-            if exc_type is None:
+            if exc_type is None and not self.force_rollback:
+                # Commit changes made in the transaction context
                 if self._savepoint_name:
                     self._conn._savepoints.pop()
                     # TODO: Add test for this assert
@@ -83,6 +83,7 @@ class Transaction:
                     self._log_and_exec_command(b"COMMIT")
                     self._conn._savepoints = None
             else:
+                # Rollback changes made in the transaction context
                 if self._savepoint_name:
                     self._conn._savepoints.pop()
                     # TODO: Add test for this assert
@@ -95,3 +96,7 @@ class Transaction:
                     # assert len(self._conn._savepoints) == 0
                     self._log_and_exec_command(b"ROLLBACK")
                     self._conn._savepoints = None
+
+    def _log_and_exec_command(self, command: bytes) -> None:
+        _log.debug(f"{self._conn}: {command.decode('ascii')}")
+        self._conn._exec_command(command)

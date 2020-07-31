@@ -348,3 +348,27 @@ def test_named_savepoints(conn, caplog):
                     f"{conn}: SAVEPOINT tx_savepoint_1",
                 ]
                 caplog.clear()
+
+
+def test_force_rollback_successful_exit(conn, svcconn):
+    """
+    Transaction started with the force_rollback option enabled discards all
+    changes at the end of the context.
+    """
+    with conn.transaction(force_rollback=True):
+        insert_row(conn, "foo")
+    assert_rows(conn, set())
+    assert_rows(svcconn, set())
+
+
+def test_force_rollback_exception_exit(conn, svcconn):
+    """
+    Transaction started with the force_rollback option enabled discards all
+    changes at the end of the context.
+    """
+    with pytest.raises(ExpectedException):
+        with conn.transaction(force_rollback=True):
+            insert_row(conn, "foo")
+            raise ExpectedException()
+    assert_rows(conn, set())
+    assert_rows(svcconn, set())
