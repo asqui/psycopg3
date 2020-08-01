@@ -16,6 +16,22 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 
+class Rollback(Exception):
+    """
+    Exit the current Transaction context immediately and rollback any changes
+    made within this context.
+
+    If a transaction context is specified in the constructor, rollback
+    enclosing transactions contexts up to and including the one specified.
+    """
+
+    def __init__(self, transaction: "Transaction" = None) -> None:
+        self.transaction = transaction
+
+    def __str__(self) -> str:
+        return f"<Rollback({self.transaction})>"
+
+
 class Transaction:
     def __init__(
         self, conn: "Connection", savepoint_name: str, force_rollback: bool
@@ -37,6 +53,10 @@ class Transaction:
         if self._savepoint_name is None:
             return None
         return self._savepoint_name.decode("ascii")
+
+    @property
+    def rollback_exception(self) -> Rollback:
+        return Rollback(self)
 
     def __enter__(self) -> None:
         with self._conn.lock:
@@ -84,6 +104,12 @@ class Transaction:
                     self._conn._savepoints = None
             else:
                 # Rollback changes made in the transaction context
+                if exc_type is Rollback:
+                    _log.debug(
+                        f"{self._conn}: Explicit rollback from: ",
+                        exc_info=True,
+                    )
+
                 if self._savepoint_name:
                     self._conn._savepoints.pop()
                     # TODO: Add test for this assert
@@ -97,6 +123,13 @@ class Transaction:
                     self._log_and_exec_command(b"ROLLBACK")
                     self._conn._savepoints = None
 
+                if exc_type is Rollback:
+                    if exc_val.transaction in (self, None):
+                        return True  # Swallow the exception
+
     def _log_and_exec_command(self, command: bytes) -> None:
         _log.debug(f"{self._conn}: {command.decode('ascii')}")
         self._conn._exec_command(command)
+
+    def __str__(self) -> str:
+        return f"Transaction {self._savepoint_name} on {self._conn}"

@@ -4,6 +4,7 @@ import pytest
 
 import psycopg3
 from psycopg3 import transaction
+from psycopg3.transaction import Rollback
 
 
 @pytest.fixture(autouse=True)
@@ -372,3 +373,85 @@ def test_force_rollback_exception_exit(conn, svcconn):
             raise ExpectedException()
     assert_rows(conn, set())
     assert_rows(svcconn, set())
+
+
+def test_explicit_rollback_discards_changes(conn, svcconn):
+    """
+    Raising a Rollback exception in the middle of a block exits the block and
+    discards all changes made within that block.
+
+    You can raise any of the following:
+     - Rollback (type)
+     - Rollback() (instance)
+     - Rollback(tx) (instance initialised with reference to the transaction)
+     - tx.rollback_exception (convenience property that returns Rollback(tx))
+    All of these are equivalent.
+    """
+    tx = conn.transaction()
+    for to_raise in (
+        Rollback,
+        Rollback(),
+        Rollback(tx),
+        tx.rollback_exception,
+    ):
+        with tx:
+            insert_row(conn, "foo")
+            raise to_raise
+        assert_rows(conn, set(""))
+        assert_rows(svcconn, set())
+
+
+def test_explicit_rollback_outer_transaction_unaffected(conn, svcconn):
+    """
+    Raising a Rollback exception in the middle of a block does not impact an
+    enclosing transaction block.
+    """
+    with conn.transaction():
+        insert_row(conn, "before")
+        with conn.transaction():
+            insert_row(conn, "during")
+            raise Rollback
+        assert_in_transaction(conn)
+        assert_rows(svcconn, set())
+        insert_row(conn, "after")
+    assert_rows(conn, {"before", "after"})
+    assert_rows(svcconn, {"before", "after"})
+
+
+def test_explicit_rollback_of_outer_transaction(conn):
+    """
+    Raising a Rollback exception that references an outer transaction will
+    discard all changes from both inner and outer transaction blocks.
+
+    This can be raised as:
+    - Rollback(outer_tx); or
+    - outer_tx.rollback_exception
+    Both of these are equivalent.
+    """
+    outer_tx = conn.transaction()
+    for to_raise in (Rollback(outer_tx), outer_tx.rollback_exception):
+        with outer_tx:
+            insert_row(conn, "outer")
+            with conn.transaction():
+                insert_row(conn, "inner")
+                raise to_raise
+            insert_row(conn, "unreachable")
+        assert_rows(conn, set())
+
+
+def test_explicit_rollback_of_enclosing_transaction_outer_transaction_unaffected(
+    conn, svcconn
+):
+    """
+    Rolling-back an enclosing transaction does not impact an outer transaction.
+    """
+    with conn.transaction():
+        insert_row(conn, "outer-before")
+        with conn.transaction() as tx_enclosing:
+            insert_row(conn, "enclosing")
+            with conn.transaction():
+                insert_row(conn, "inner")
+                raise tx_enclosing.rollback_exception
+        insert_row(conn, "outer-after")
+    assert_rows(conn, {"outer-before", "outer-after"})
+    assert_rows(svcconn, {"outer-before", "outer-after"})
