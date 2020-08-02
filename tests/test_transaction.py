@@ -1,3 +1,4 @@
+import sys
 from contextlib import contextmanager
 from unittest.mock import patch, call
 
@@ -304,7 +305,7 @@ def test_nested_three_levels_successful_exit(conn, svcconn):
     assert_rows(svcconn, {"one", "two", "three"})
 
 
-def test_named_savepoints(conn):
+def test_named_savepoints_successful_exit(conn):
     """
     Entering a transaction context will do one of these these things:
     1. Begin an outer transaction (if one isn't already in progress)
@@ -312,7 +313,7 @@ def test_named_savepoints(conn):
     3. Create a savepoint (if a transaction is already in progress)
        either using the name provided, or auto-generating a savepoint name.
 
-    ...and exiting the context will undo the same.
+    ...and exiting the context successfully will "commit" the same.
     """
 
     @contextmanager
@@ -356,6 +357,61 @@ def test_named_savepoints(conn):
         assert tx.savepoint_name == "tx_savepoint_1"
         with assert_commands_issued("RELEASE SAVEPOINT tx_savepoint_1"):
             tx.__exit__(None, None, None)
+
+
+def test_named_savepoints_exception_exit(conn):
+    """
+    Same as the previous test but checks that when exiting the context with an
+    exception, whatever transaction and/or savepoint was started on enter will
+    be rolled-back as appropriate.
+    """
+
+    @contextmanager
+    def assert_commands_issued(*commands):
+        with patch.object(conn, "_exec_command") as mock_exec:
+            yield
+        assert mock_exec.call_args_list == [
+            call(cmd.encode("ascii")) for cmd in commands
+        ]
+
+    try:
+        raise ExpectedException()
+    except ExpectedException:
+        exc_info = sys.exc_info()
+
+    # Case 1
+    tx = conn.transaction()
+    with assert_commands_issued("BEGIN"):
+        tx.__enter__()
+    assert tx.savepoint_name is None
+    with assert_commands_issued("ROLLBACK"):
+        tx.__exit__(*exc_info)
+
+    # Case 2
+    tx = conn.transaction(savepoint_name="foo")
+    with assert_commands_issued("BEGIN", "SAVEPOINT foo"):
+        tx.__enter__()
+    assert tx.savepoint_name == "foo"
+    with assert_commands_issued("ROLLBACK TO SAVEPOINT foo", "ROLLBACK"):
+        tx.__exit__(*exc_info)
+
+    # Case 3 (with savepoint name provided)
+    with conn.transaction():
+        tx = conn.transaction(savepoint_name="bar")
+        with assert_commands_issued("SAVEPOINT bar"):
+            tx.__enter__()
+        assert tx.savepoint_name == "bar"
+        with assert_commands_issued("ROLLBACK TO SAVEPOINT bar"):
+            tx.__exit__(*exc_info)
+
+    # Case 3 (with savepoint name auto-generated)
+    with conn.transaction():
+        tx = conn.transaction()
+        with assert_commands_issued("SAVEPOINT tx_savepoint_1"):
+            tx.__enter__()
+        assert tx.savepoint_name == "tx_savepoint_1"
+        with assert_commands_issued("ROLLBACK TO SAVEPOINT tx_savepoint_1"):
+            tx.__exit__(*exc_info)
 
 
 def test_force_rollback_successful_exit(conn, svcconn):
