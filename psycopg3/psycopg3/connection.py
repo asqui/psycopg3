@@ -298,6 +298,7 @@ class Connection(BaseConnection):
 
     def _exec_command(self, command: bytes) -> None:
         # Caller must hold self.lock
+        logger.debug(f"{self}: {command!r}")
         self.pgconn.send_query(command)
         results = self.wait(execute(self.pgconn))
         if results[-1].status != ExecStatus.COMMAND_OK:

@@ -128,9 +128,7 @@ def test_preserves_autocommit(conn, autocommit):
     assert conn.autocommit is autocommit
 
 
-def test_autocommit_off_but_no_transaction_started_successful_exit(
-    conn, svcconn
-):
+def test_autocommit_off_but_no_tx_started_successful_exit(conn, svcconn):
     """
     Scenario:
     * Connection has autocommit off but no transaction has been initiated
@@ -151,9 +149,7 @@ def test_autocommit_off_but_no_transaction_started_successful_exit(
     assert_rows(svcconn, {"new"})
 
 
-def test_autocommit_off_but_no_transaction_started_exception_exit(
-    conn, svcconn
-):
+def test_autocommit_off_but_no_tx_started_exception_exit(conn, svcconn):
     """
     Scenario:
     * Connection has autocommit off but no transaction has been initiated
@@ -176,9 +172,7 @@ def test_autocommit_off_but_no_transaction_started_exception_exit(
     assert_rows(svcconn, set())
 
 
-def test_autocommit_off_and_transaction_in_progress_successful_exit(
-    conn, svcconn
-):
+def test_autocommit_off_and_tx_in_progress_successful_exit(conn, svcconn):
     """
     Scenario:
     * Connection has autocommit off but and a transaction is already in
@@ -201,9 +195,7 @@ def test_autocommit_off_and_transaction_in_progress_successful_exit(
     assert_rows(svcconn, set())
 
 
-def test_autocommit_off_and_transaction_in_progress_exception_exit(
-    conn, svcconn
-):
+def test_autocommit_off_and_tx_in_progress_exception_exit(conn, svcconn):
     """
     Scenario:
     * Connection has autocommit off but and a transaction is already in
@@ -296,9 +288,9 @@ def test_nested_three_levels_successful_exit(conn, svcconn):
     """Exercise management of more than one savepoint."""
     with conn.transaction():  # BEGIN
         insert_row(conn, "one")
-        with conn.transaction():  # SAVEPOINT tx_savepoint_1
+        with conn.transaction():  # SAVEPOINT s1
             insert_row(conn, "two")
-            with conn.transaction():  # SAVEPOINT tx_savepoint_2
+            with conn.transaction():  # SAVEPOINT s2
                 insert_row(conn, "three")
     assert_not_in_transaction(conn)
     assert_rows(conn, {"one", "two", "three"})
@@ -326,36 +318,36 @@ def test_named_savepoints_successful_exit(conn):
 
     # Case 1
     tx = conn.transaction()
-    with assert_commands_issued("BEGIN"):
+    with assert_commands_issued("begin"):
         tx.__enter__()
     assert tx.savepoint_name is None
-    with assert_commands_issued("COMMIT"):
+    with assert_commands_issued("commit"):
         tx.__exit__(None, None, None)
 
     # Case 2
     tx = conn.transaction(savepoint_name="foo")
-    with assert_commands_issued("BEGIN", "SAVEPOINT foo"):
+    with assert_commands_issued("begin", "savepoint foo"):
         tx.__enter__()
     assert tx.savepoint_name == "foo"
-    with assert_commands_issued("RELEASE SAVEPOINT foo", "COMMIT"):
+    with assert_commands_issued("release savepoint foo", "commit"):
         tx.__exit__(None, None, None)
 
     # Case 3 (with savepoint name provided)
     with conn.transaction():
         tx = conn.transaction(savepoint_name="bar")
-        with assert_commands_issued("SAVEPOINT bar"):
+        with assert_commands_issued("savepoint bar"):
             tx.__enter__()
         assert tx.savepoint_name == "bar"
-        with assert_commands_issued("RELEASE SAVEPOINT bar"):
+        with assert_commands_issued("release savepoint bar"):
             tx.__exit__(None, None, None)
 
     # Case 3 (with savepoint name auto-generated)
     with conn.transaction():
         tx = conn.transaction()
-        with assert_commands_issued("SAVEPOINT tx_savepoint_1"):
+        with assert_commands_issued("savepoint s1"):
             tx.__enter__()
-        assert tx.savepoint_name == "tx_savepoint_1"
-        with assert_commands_issued("RELEASE SAVEPOINT tx_savepoint_1"):
+        assert tx.savepoint_name == "s1"
+        with assert_commands_issued("release savepoint s1"):
             tx.__exit__(None, None, None)
 
 
@@ -381,36 +373,36 @@ def test_named_savepoints_exception_exit(conn):
 
     # Case 1
     tx = conn.transaction()
-    with assert_commands_issued("BEGIN"):
+    with assert_commands_issued("begin"):
         tx.__enter__()
     assert tx.savepoint_name is None
-    with assert_commands_issued("ROLLBACK"):
+    with assert_commands_issued("rollback"):
         tx.__exit__(*exc_info)
 
     # Case 2
     tx = conn.transaction(savepoint_name="foo")
-    with assert_commands_issued("BEGIN", "SAVEPOINT foo"):
+    with assert_commands_issued("begin", "savepoint foo"):
         tx.__enter__()
     assert tx.savepoint_name == "foo"
-    with assert_commands_issued("ROLLBACK TO SAVEPOINT foo", "ROLLBACK"):
+    with assert_commands_issued("rollback to savepoint foo", "rollback"):
         tx.__exit__(*exc_info)
 
     # Case 3 (with savepoint name provided)
     with conn.transaction():
         tx = conn.transaction(savepoint_name="bar")
-        with assert_commands_issued("SAVEPOINT bar"):
+        with assert_commands_issued("savepoint bar"):
             tx.__enter__()
         assert tx.savepoint_name == "bar"
-        with assert_commands_issued("ROLLBACK TO SAVEPOINT bar"):
+        with assert_commands_issued("rollback to savepoint bar"):
             tx.__exit__(*exc_info)
 
     # Case 3 (with savepoint name auto-generated)
     with conn.transaction():
         tx = conn.transaction()
-        with assert_commands_issued("SAVEPOINT tx_savepoint_1"):
+        with assert_commands_issued("savepoint s1"):
             tx.__enter__()
-        assert tx.savepoint_name == "tx_savepoint_1"
-        with assert_commands_issued("ROLLBACK TO SAVEPOINT tx_savepoint_1"):
+        assert tx.savepoint_name == "s1"
+        with assert_commands_issued("rollback to savepoint s1"):
             tx.__exit__(*exc_info)
 
 
@@ -464,7 +456,7 @@ def test_explicit_rollback_discards_changes(conn, svcconn):
         assert_rows(svcconn, set())
 
 
-def test_explicit_rollback_outer_transaction_unaffected(conn, svcconn):
+def test_explicit_rollback_outer_tx_unaffected(conn, svcconn):
     """
     Raising a Rollback exception in the middle of a block does not impact an
     enclosing transaction block.
@@ -502,9 +494,7 @@ def test_explicit_rollback_of_outer_transaction(conn):
         assert_rows(conn, set())
 
 
-def test_explicit_rollback_of_enclosing_transaction_outer_transaction_unaffected(
-    conn, svcconn
-):
+def test_explicit_rollback_of_enclosing_tx_outer_tx_unaffected(conn, svcconn):
     """
     Rolling-back an enclosing transaction does not impact an outer transaction.
     """

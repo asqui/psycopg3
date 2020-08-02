@@ -25,24 +25,24 @@ class Rollback(Exception):
     enclosing transactions contexts up to and including the one specified.
     """
 
-    def __init__(self, transaction: Optional["Transaction"] = None) -> None:
+    def __init__(self, transaction: Optional["Transaction"] = None):
         self.transaction = transaction
 
-    def __str__(self) -> str:
-        return f"<Rollback({self.transaction})>"
+    def __repr__(self) -> str:
+        return f"{self.__class__.__qualname__}({self.transaction!r})"
 
 
 class Transaction:
     def __init__(
         self,
-        conn: "Connection",
+        connection: "Connection",
         savepoint_name: Optional[str],
         force_rollback: bool,
-    ) -> None:
-        self._conn = conn
+    ):
+        self._conn = connection
         self._savepoint_name: Optional[bytes] = None
         if savepoint_name is not None:
-            self._savepoint_name = savepoint_name.encode("ascii")
+            self._savepoint_name = connection.codec.encode(savepoint_name)[0]
         self.force_rollback = force_rollback
 
         self._outer_transaction: bool
@@ -55,7 +55,7 @@ class Transaction:
     def savepoint_name(self) -> Optional[str]:
         if self._savepoint_name is None:
             return None
-        return self._savepoint_name.decode("ascii")
+        return self._conn.codec.decode(self._savepoint_name)[0]
 
     @property
     def rollback_exception(self) -> Rollback:
@@ -67,20 +67,18 @@ class Transaction:
                 assert self._conn._savepoints is None
                 self._conn._savepoints = []
                 self._outer_transaction = True
-                self._log_and_exec_command(b"BEGIN")
+                self._conn._exec_command(b"begin")
             else:
                 if self._conn._savepoints is None:
                     self._conn._savepoints = []
                 self._outer_transaction = False
                 if self._savepoint_name is None:
-                    self._savepoint_name = b"tx_savepoint_%i" % (
+                    self._savepoint_name = b"s%i" % (
                         len(self._conn._savepoints) + 1
                     )
 
             if self._savepoint_name is not None:
-                self._log_and_exec_command(
-                    b"SAVEPOINT " + self._savepoint_name
-                )
+                self._conn._exec_command(b"savepoint " + self._savepoint_name)
                 self._conn._savepoints.append(self._savepoint_name)
         return self
 
@@ -98,13 +96,13 @@ class Transaction:
                     # assert self._conn._savepoints.pop() == self._savepoint
                     assert self._conn._savepoints is not None
                     self._conn._savepoints.pop()
-                    self._log_and_exec_command(
-                        b"RELEASE SAVEPOINT " + self._savepoint_name
+                    self._conn._exec_command(
+                        b"release savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
                     # TODO: Add test for this assert
                     # assert len(self._conn._savepoints) == 0
-                    self._log_and_exec_command(b"COMMIT")
+                    self._conn._exec_command(b"commit")
                     self._conn._savepoints = None
             else:
                 # Rollback changes made in the transaction context
@@ -119,13 +117,13 @@ class Transaction:
                     # assert self._conn._savepoints.pop() == self._savepoint
                     assert self._conn._savepoints is not None
                     self._conn._savepoints.pop()
-                    self._log_and_exec_command(
-                        b"ROLLBACK TO SAVEPOINT " + self._savepoint_name
+                    self._conn._exec_command(
+                        b"rollback to savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
                     # TODO: Add test for this assert
                     # assert len(self._conn._savepoints) == 0
-                    self._log_and_exec_command(b"ROLLBACK")
+                    self._conn._exec_command(b"rollback")
                     self._conn._savepoints = None
 
                 if isinstance(exc_val, Rollback):
@@ -133,9 +131,11 @@ class Transaction:
                         return True  # Swallow the exception
         return False
 
-    def _log_and_exec_command(self, command: bytes) -> None:
-        _log.debug(f"{self._conn}: {command.decode('ascii')}")
-        self._conn._exec_command(command)
-
-    def __str__(self) -> str:
-        return f"Transaction {self._savepoint_name!r} on" f" {self._conn}"
+    def __repr__(self) -> str:
+        args = [f"connection={self.connection}"]
+        if self.savepoint_name is not None:
+            args.append(f"savepoint_name={self.savepoint_name!r}")
+        if self.force_rollback:
+            args.append("force_rollback=True")
+        args = ", ".join(args)
+        return f"{self.__class__.__qualname__}({args})"
