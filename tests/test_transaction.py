@@ -1,4 +1,5 @@
 import logging
+from contextlib import contextmanager
 
 import pytest
 
@@ -312,43 +313,45 @@ def test_named_savepoints(conn, caplog):
     3. Create a savepoint (if a transaction is already in progress)
        either using the name provided, or auto-generating a savepoint name.
     """
-    with caplog.at_level(logging.DEBUG, logger=transaction._log.name):
-        # Case 1
-        with conn.transaction() as tx:
-            assert tx.savepoint_name is None
-            assert caplog.messages == [f"{conn}: BEGIN"]
-            caplog.clear()
-        assert caplog.messages == [f"{conn}: COMMIT"]
-        caplog.clear()
 
-        # Case 2
-        with conn.transaction(savepoint_name="foo") as tx:
-            assert tx.savepoint_name == "foo"
-            assert caplog.messages == [
-                f"{conn}: BEGIN",
-                f"{conn}: SAVEPOINT foo",
-            ]
+    @contextmanager
+    def assert_commands_issued(*commands):
+        with caplog.at_level(logging.DEBUG, logger=transaction._log.name):
+            caplog.clear()
+            yield
+            assert caplog.messages == [f"{conn}: {cmd}" for cmd in commands]
             caplog.clear()
 
-        # Case 3 (with savepoint name provided)
-        with conn.transaction():
-            caplog.clear()
-            with conn.transaction(savepoint_name="bar") as tx:
-                assert tx.savepoint_name == "bar"
-                assert caplog.messages == [
-                    f"{conn}: SAVEPOINT bar",
-                ]
-                caplog.clear()
+    # Case 1
+    tx = conn.transaction()
+    with assert_commands_issued("BEGIN"):
+        tx.__enter__()
+    assert tx.savepoint_name is None
+    with assert_commands_issued("COMMIT"):
+        tx.__exit__(None, None, None)
 
-        # Case 3 (with savepoint name auto-generated)
-        with conn.transaction():
-            caplog.clear()
-            with conn.transaction() as tx:
-                assert tx.savepoint_name == "tx_savepoint_1"
-                assert caplog.messages == [
-                    f"{conn}: SAVEPOINT tx_savepoint_1",
-                ]
-                caplog.clear()
+    # Case 2
+    tx = conn.transaction(savepoint_name="foo")
+    with assert_commands_issued("BEGIN", "SAVEPOINT foo"):
+        tx.__enter__()
+    assert tx.savepoint_name == "foo"
+    tx.__exit__(None, None, None)
+
+    # Case 3 (with savepoint name provided)
+    with conn.transaction():
+        tx = conn.transaction(savepoint_name="bar")
+        with assert_commands_issued("SAVEPOINT bar"):
+            tx.__enter__()
+        assert tx.savepoint_name == "bar"
+        tx.__exit__(None, None, None)
+
+    # Case 3 (with savepoint name auto-generated)
+    with conn.transaction():
+        tx = conn.transaction()
+        with assert_commands_issued("SAVEPOINT tx_savepoint_1"):
+            tx.__enter__()
+        assert tx.savepoint_name == "tx_savepoint_1"
+        tx.__exit__(None, None, None)
 
 
 def test_force_rollback_successful_exit(conn, svcconn):
