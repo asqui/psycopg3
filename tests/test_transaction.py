@@ -1,10 +1,9 @@
-import logging
 from contextlib import contextmanager
+from unittest.mock import patch, call
 
 import pytest
 
 import psycopg3
-from psycopg3 import transaction
 from psycopg3.transaction import Rollback
 
 
@@ -305,7 +304,7 @@ def test_nested_three_levels_successful_exit(conn, svcconn):
     assert_rows(svcconn, {"one", "two", "three"})
 
 
-def test_named_savepoints(conn, caplog):
+def test_named_savepoints(conn):
     """
     Entering a transaction context will do one of these these things:
     1. Begin an outer transaction (if one isn't already in progress)
@@ -318,11 +317,11 @@ def test_named_savepoints(conn, caplog):
 
     @contextmanager
     def assert_commands_issued(*commands):
-        with caplog.at_level(logging.DEBUG, logger=transaction._log.name):
-            caplog.clear()
+        with patch.object(conn, "_exec_command") as mock_exec:
             yield
-            assert caplog.messages == [f"{conn}: {cmd}" for cmd in commands]
-            caplog.clear()
+        assert mock_exec.call_args_list == [
+            call(cmd.encode("ascii")) for cmd in commands
+        ]
 
     # Case 1
     tx = conn.transaction()
