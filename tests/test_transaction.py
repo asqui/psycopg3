@@ -312,6 +312,8 @@ def test_named_savepoints(conn, caplog):
     2. Begin an outer transaction and create a savepoint (if one is named)
     3. Create a savepoint (if a transaction is already in progress)
        either using the name provided, or auto-generating a savepoint name.
+
+    ...and exiting the context will undo the same.
     """
 
     @contextmanager
@@ -335,7 +337,8 @@ def test_named_savepoints(conn, caplog):
     with assert_commands_issued("BEGIN", "SAVEPOINT foo"):
         tx.__enter__()
     assert tx.savepoint_name == "foo"
-    tx.__exit__(None, None, None)
+    with assert_commands_issued("RELEASE SAVEPOINT foo", "COMMIT"):
+        tx.__exit__(None, None, None)
 
     # Case 3 (with savepoint name provided)
     with conn.transaction():
@@ -343,7 +346,8 @@ def test_named_savepoints(conn, caplog):
         with assert_commands_issued("SAVEPOINT bar"):
             tx.__enter__()
         assert tx.savepoint_name == "bar"
-        tx.__exit__(None, None, None)
+        with assert_commands_issued("RELEASE SAVEPOINT bar"):
+            tx.__exit__(None, None, None)
 
     # Case 3 (with savepoint name auto-generated)
     with conn.transaction():
@@ -351,7 +355,8 @@ def test_named_savepoints(conn, caplog):
         with assert_commands_issued("SAVEPOINT tx_savepoint_1"):
             tx.__enter__()
         assert tx.savepoint_name == "tx_savepoint_1"
-        tx.__exit__(None, None, None)
+        with assert_commands_issued("RELEASE SAVEPOINT tx_savepoint_1"):
+            tx.__exit__(None, None, None)
 
 
 def test_force_rollback_successful_exit(conn, svcconn):
