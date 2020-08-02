@@ -88,7 +88,7 @@ class BaseConnection:
         self._pgenc = b""
 
         # stack of savepoint names managed by active Transaction() blocks
-        self._savepoints: Optional[List[str]] = None
+        self._savepoints: Optional[List[bytes]] = None
         # (None when there no active Transaction blocks; [] when there is only
         # one Transaction block, with a top-level transaction and no savepoint)
 
@@ -307,7 +307,9 @@ class Connection(BaseConnection):
             )
 
     def transaction(
-        self, savepoint_name: str = None, force_rollback: bool = False
+        self,
+        savepoint_name: Optional[str] = None,
+        force_rollback: bool = False,
     ) -> Transaction:
         return Transaction(self, savepoint_name, force_rollback)
 
