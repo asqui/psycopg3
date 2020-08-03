@@ -45,7 +45,7 @@ class Transaction:
             self._savepoint_name = connection.codec.encode(savepoint_name)[0]
         self.force_rollback = force_rollback
 
-        self._outer_transaction: bool
+        self._outer_transaction: Optional[bool] = None
 
     @property
     def connection(self) -> "Connection":
@@ -88,20 +88,24 @@ class Transaction:
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> bool:
+        out_of_order_msg = (
+            "Out-of-order Transaction context exits. Are you "
+            "calling __exit__() manually and getting it wrong?"
+        )
+        assert self._outer_transaction is not None, out_of_order_msg
         with self._conn.lock:
             if exc_type is None and not self.force_rollback:
                 # Commit changes made in the transaction context
                 if self._savepoint_name:
-                    # TODO: Add test for these asserts
-                    # assert self._conn._savepoints.pop() == self._savepoint
-                    assert self._conn._savepoints is not None
-                    self._conn._savepoints.pop()
+                    assert self._conn._savepoints is not None, out_of_order_msg
+                    actual = self._conn._savepoints.pop()
+                    assert actual == self._savepoint_name, out_of_order_msg
                     self._conn._exec_command(
                         b"release savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
-                    # TODO: Add test for this assert
-                    # assert len(self._conn._savepoints) == 0
+                    assert self._conn._savepoints is not None, out_of_order_msg
+                    assert len(self._conn._savepoints) == 0, out_of_order_msg
                     self._conn._exec_command(b"commit")
                     self._conn._savepoints = None
             else:
@@ -113,16 +117,15 @@ class Transaction:
                     )
 
                 if self._savepoint_name:
-                    # TODO: Add test for these asserts
-                    # assert self._conn._savepoints.pop() == self._savepoint
-                    assert self._conn._savepoints is not None
-                    self._conn._savepoints.pop()
+                    assert self._conn._savepoints is not None, out_of_order_msg
+                    actual = self._conn._savepoints.pop()
+                    assert actual == self._savepoint_name, out_of_order_msg
                     self._conn._exec_command(
                         b"rollback to savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
-                    # TODO: Add test for this assert
-                    # assert len(self._conn._savepoints) == 0
+                    assert self._conn._savepoints is not None, out_of_order_msg
+                    assert len(self._conn._savepoints) == 0, out_of_order_msg
                     self._conn._exec_command(b"rollback")
                     self._conn._savepoints = None
 

@@ -50,6 +50,13 @@ class ExpectedException(Exception):
     pass
 
 
+def some_exc_info():
+    try:
+        raise ExpectedException()
+    except ExpectedException:
+        return sys.exc_info()
+
+
 def test_basic(conn):
     """Basic use of transaction() to BEGIN and COMMIT a transaction."""
     assert_not_in_transaction(conn)
@@ -357,18 +364,13 @@ def test_named_savepoints_exception_exit(conn):
     exception, whatever transaction and/or savepoint was started on enter will
     be rolled-back as appropriate.
     """
-    try:
-        raise ExpectedException()
-    except ExpectedException:
-        exc_info = sys.exc_info()
-
     # Case 1
     tx = conn.transaction()
     with assert_commands_issued(conn, "begin"):
         tx.__enter__()
     assert tx.savepoint_name is None
     with assert_commands_issued(conn, "rollback"):
-        tx.__exit__(*exc_info)
+        tx.__exit__(*some_exc_info())
 
     # Case 2
     tx = conn.transaction(savepoint_name="foo")
@@ -376,7 +378,7 @@ def test_named_savepoints_exception_exit(conn):
         tx.__enter__()
     assert tx.savepoint_name == "foo"
     with assert_commands_issued(conn, "rollback to savepoint foo", "rollback"):
-        tx.__exit__(*exc_info)
+        tx.__exit__(*some_exc_info())
 
     # Case 3 (with savepoint name provided)
     with conn.transaction():
@@ -385,7 +387,7 @@ def test_named_savepoints_exception_exit(conn):
             tx.__enter__()
         assert tx.savepoint_name == "bar"
         with assert_commands_issued(conn, "rollback to savepoint bar"):
-            tx.__exit__(*exc_info)
+            tx.__exit__(*some_exc_info())
 
     # Case 3 (with savepoint name auto-generated)
     with conn.transaction():
@@ -394,7 +396,7 @@ def test_named_savepoints_exception_exit(conn):
             tx.__enter__()
         assert tx.savepoint_name == "s1"
         with assert_commands_issued(conn, "rollback to savepoint s1"):
-            tx.__exit__(*exc_info)
+            tx.__exit__(*some_exc_info())
 
 
 def test_force_rollback_successful_exit(conn, svcconn):
@@ -499,3 +501,45 @@ def test_explicit_rollback_of_enclosing_tx_outer_tx_unaffected(conn, svcconn):
         insert_row(conn, "outer-after")
     assert_rows(conn, {"outer-before", "outer-after"})
     assert_rows(svcconn, {"outer-before", "outer-after"})
+
+
+@pytest.mark.parametrize("exc_info", [(None, None, None), some_exc_info()])
+@pytest.mark.parametrize("name", [None, "s1"])
+def test_manual_enter_and_exit_out_of_order_exit_asserts(conn, name, exc_info):
+    """
+    When user is calling __enter__() and __exit__() manually for some reason,
+    provide a helpful error message if they call __exit__() in the wrong order
+    for nested transactions.
+    """
+    tx1, tx2 = conn.transaction(name), conn.transaction()
+    tx1.__enter__()
+    tx2.__enter__()
+    with pytest.raises(AssertionError, match="Out-of-order"):
+        tx1.__exit__(*exc_info)
+
+
+@pytest.mark.parametrize("exc_info", [(None, None, None), some_exc_info()])
+@pytest.mark.parametrize("name", [None, "s1"])
+def test_manual_exit_without_enter_asserts(conn, name, exc_info):
+    """
+    When user is calling __enter__() and __exit__() manually for some reason,
+    provide a helpful error message if they call __exit__() without first
+    having called __enter__()
+    """
+    tx = conn.transaction(name)
+    with pytest.raises(AssertionError, match="Out-of-order"):
+        tx.__exit__(*exc_info)
+
+
+@pytest.mark.parametrize("exc_info", [(None, None, None), some_exc_info()])
+@pytest.mark.parametrize("name", [None, "s1"])
+def test_manual_exit_twice_asserts(conn, name, exc_info):
+    """
+    When user is calling __enter__() and __exit__() manually for some reason,
+    provide a helpful error message if they accidentally call __exit__() twice.
+    """
+    tx = conn.transaction(name)
+    tx.__enter__()
+    tx.__exit__(*exc_info)
+    with pytest.raises(AssertionError, match="Out-of-order"):
+        tx.__exit__(*exc_info)
