@@ -42,6 +42,8 @@ class Transaction:
         self._conn = connection
         self._savepoint_name: Optional[bytes] = None
         if savepoint_name is not None:
+            if len(savepoint_name) == 0:
+                raise ValueError("savepoint_name must be a non-empty string")
             self._savepoint_name = connection.codec.encode(savepoint_name)[0]
         self.force_rollback = force_rollback
 

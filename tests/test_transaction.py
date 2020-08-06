@@ -313,6 +313,15 @@ def test_nested_three_levels_successful_exit(conn, svcconn):
     assert_rows(svcconn, {"one", "two", "three"})
 
 
+def test_named_savepoint_empty_string_invalid(conn):
+    """
+    Raise validate savepoint_name up-front (rather than later constructing an
+    invalid SQL command and having that fail with an OperationalError).
+    """
+    with pytest.raises(ValueError):
+        conn.transaction(savepoint_name="")
+
+
 def test_named_savepoints_successful_exit(conn):
     """
     Entering a transaction context will do one of these these things:
