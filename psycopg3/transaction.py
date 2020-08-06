@@ -123,7 +123,8 @@ class Transaction:
                     actual = self._conn._savepoints.pop()
                     assert actual == self._savepoint_name, out_of_order_msg
                     self._conn._exec_command(
-                        b"rollback to savepoint " + self._savepoint_name
+                        b"rollback to savepoint " + self._savepoint_name + b";"
+                        b"release savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
                     assert self._conn._savepoints is not None, out_of_order_msg

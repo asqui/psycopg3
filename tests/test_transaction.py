@@ -417,6 +417,55 @@ def test_named_savepoints_exception_exit(conn):
             tx.__exit__(*some_exc_info())
 
 
+def test_named_savepoints_with_repeated_names_works(conn):
+    """
+    Using the same savepoint name repeatedly works correctly, but bypasses
+    some sanity checks.
+    """
+    # Works correctly if no inner transactions are rolled back
+    with conn.transaction(force_rollback=True):
+        with conn.transaction("sp"):
+            insert_row(conn, "tx1")
+            with conn.transaction("sp"):
+                insert_row(conn, "tx2")
+                with conn.transaction("sp"):
+                    insert_row(conn, "tx3")
+        assert_rows(conn, {"tx1", "tx2", "tx3"})
+
+    # Works correctly if one level of inner transaction is rolled back
+    with conn.transaction(force_rollback=True):
+        with conn.transaction("s1"):
+            insert_row(conn, "tx1")
+            with conn.transaction("s1", force_rollback=True):
+                insert_row(conn, "tx2")
+                with conn.transaction("s1"):
+                    insert_row(conn, "tx3")
+            assert_rows(conn, {"tx1"})
+        assert_rows(conn, {"tx1"})
+
+    # Works correctly if multiple inner transactions are rolled back
+    # (This scenario mandates releasing savepoints after rolling back to them.)
+    with conn.transaction(force_rollback=True):
+        with conn.transaction("s1"):
+            insert_row(conn, "tx1")
+            with conn.transaction("s1") as tx2:
+                insert_row(conn, "tx2")
+                with conn.transaction("s1"):
+                    insert_row(conn, "tx3")
+                    raise Rollback(tx2)
+            assert_rows(conn, {"tx1"})
+        assert_rows(conn, {"tx1"})
+
+    # Will not (always) catch out-of-order exits
+    with conn.transaction(force_rollback=True):
+        tx1 = conn.transaction("s1")
+        tx2 = conn.transaction("s1")
+        tx1.__enter__()
+        tx2.__enter__()
+        tx1.__exit__(None, None, None)
+        tx2.__exit__(None, None, None)
+
+
 def test_force_rollback_successful_exit(conn, svcconn):
     """
     Transaction started with the force_rollback option enabled discards all
