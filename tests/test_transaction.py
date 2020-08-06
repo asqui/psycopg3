@@ -5,6 +5,7 @@ from unittest.mock import patch, call
 import pytest
 
 import psycopg3
+from psycopg3 import OperationalError
 from psycopg3.transaction import Rollback
 
 
@@ -320,6 +321,14 @@ def test_named_savepoint_empty_string_invalid(conn):
     """
     with pytest.raises(ValueError):
         conn.transaction(savepoint_name="")
+
+
+@pytest.mark.xfail(raises=OperationalError, reason="TODO: Escape sp names")
+def test_named_savepoint_escapes_savepoint_name(conn):
+    with conn.transaction("s-1"):
+        pass
+    with conn.transaction("s1; drop table students"):
+        pass
 
 
 def test_named_savepoints_successful_exit(conn):
