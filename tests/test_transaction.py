@@ -4,8 +4,7 @@ from unittest.mock import patch, call
 
 import pytest
 
-import psycopg3
-from psycopg3 import OperationalError
+from psycopg3 import OperationalError, ProgrammingError
 from psycopg3.transaction import Rollback
 
 
@@ -122,11 +121,11 @@ def test_prohibits_use_of_commit_rollback_autocommit(conn):
     conn.rollback()
 
     with conn.transaction():
-        with pytest.raises(psycopg3.ProgrammingError):
+        with pytest.raises(ProgrammingError):
             conn.autocommit = False
-        with pytest.raises(psycopg3.ProgrammingError):
+        with pytest.raises(ProgrammingError):
             conn.commit()
-        with pytest.raises(psycopg3.ProgrammingError):
+        with pytest.raises(ProgrammingError):
             conn.rollback()
 
     conn.autocommit = False
@@ -550,7 +549,7 @@ def test_explicit_rollback_of_outer_transaction(conn):
             with conn.transaction():
                 insert_row(conn, "inner")
                 raise to_raise
-            insert_row(conn, "unreachable")
+            assert False, "This line of code should be unreachable."
         assert_rows(conn, set())
 
 
@@ -566,8 +565,10 @@ def test_explicit_rollback_of_enclosing_tx_outer_tx_unaffected(conn, svcconn):
                 insert_row(conn, "inner")
                 raise tx_enclosing.rollback_exception
         insert_row(conn, "outer-after")
-    assert_rows(conn, {"outer-before", "outer-after"})
-    assert_rows(svcconn, {"outer-before", "outer-after"})
+
+        assert_rows(conn, {"outer-before", "outer-after"})
+        assert_rows(svcconn, set())  # Not yet committed
+    assert_rows(svcconn, {"outer-before", "outer-after"})  # Changes committed
 
 
 @pytest.mark.parametrize("exc_info", [(None, None, None), some_exc_info()])
