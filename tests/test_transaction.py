@@ -394,7 +394,9 @@ def test_named_savepoints_exception_exit(conn):
     with assert_commands_issued(conn, "begin", "savepoint foo"):
         tx.__enter__()
     assert tx.savepoint_name == "foo"
-    with assert_commands_issued(conn, "rollback to savepoint foo", "rollback"):
+    with assert_commands_issued(
+        conn, "rollback to savepoint foo;release savepoint foo", "rollback"
+    ):
         tx.__exit__(*some_exc_info())
 
     # Case 3 (with savepoint name provided)
@@ -403,7 +405,9 @@ def test_named_savepoints_exception_exit(conn):
         with assert_commands_issued(conn, "savepoint bar"):
             tx.__enter__()
         assert tx.savepoint_name == "bar"
-        with assert_commands_issued(conn, "rollback to savepoint bar"):
+        with assert_commands_issued(
+            conn, "rollback to savepoint bar;release savepoint bar"
+        ):
             tx.__exit__(*some_exc_info())
 
     # Case 3 (with savepoint name auto-generated)
@@ -412,7 +416,9 @@ def test_named_savepoints_exception_exit(conn):
         with assert_commands_issued(conn, "savepoint s1"):
             tx.__enter__()
         assert tx.savepoint_name == "s1"
-        with assert_commands_issued(conn, "rollback to savepoint s1"):
+        with assert_commands_issued(
+            conn, "rollback to savepoint s1;release savepoint s1"
+        ):
             tx.__exit__(*some_exc_info())
 
 
