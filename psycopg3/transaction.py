@@ -5,6 +5,8 @@ Transaction context managers returned by Connection.transaction()
 # Copyright (C) 2020 The Psycopg Team
 
 import logging
+
+from psycopg3.errors import ProgrammingError
 from types import TracebackType
 from typing import Optional, Type, TYPE_CHECKING
 
@@ -59,14 +61,10 @@ class Transaction:
             return None
         return self._conn.codec.decode(self._savepoint_name)[0]
 
-    @property
-    def rollback_exception(self) -> Rollback:
-        return Rollback(self)
-
     def __enter__(self) -> "Transaction":
         with self._conn.lock:
             if self._conn.pgconn.transaction_status == TransactionStatus.IDLE:
-                assert self._conn._savepoints is None
+                assert self._conn._savepoints is None, self._conn._savepoints
                 self._conn._savepoints = []
                 self._outer_transaction = True
                 self._conn._exec_command(b"begin")
@@ -90,45 +88,54 @@ class Transaction:
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> bool:
-        out_of_order_msg = (
+        out_of_order_err = ProgrammingError(
             "Out-of-order Transaction context exits. Are you "
             "calling __exit__() manually and getting it wrong?"
         )
-        assert self._outer_transaction is not None, out_of_order_msg
+        if self._outer_transaction is None:
+            raise out_of_order_err
         with self._conn.lock:
             if exc_type is None and not self.force_rollback:
                 # Commit changes made in the transaction context
                 if self._savepoint_name:
-                    assert self._conn._savepoints is not None, out_of_order_msg
+                    if self._conn._savepoints is None:
+                        raise out_of_order_err
                     actual = self._conn._savepoints.pop()
-                    assert actual == self._savepoint_name, out_of_order_msg
+                    if actual != self._savepoint_name:
+                        raise out_of_order_err
                     self._conn._exec_command(
                         b"release savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
-                    assert self._conn._savepoints is not None, out_of_order_msg
-                    assert len(self._conn._savepoints) == 0, out_of_order_msg
+                    if self._conn._savepoints is None:
+                        raise out_of_order_err
+                    if len(self._conn._savepoints) != 0:
+                        raise out_of_order_err
                     self._conn._exec_command(b"commit")
                     self._conn._savepoints = None
             else:
                 # Rollback changes made in the transaction context
-                if exc_type is Rollback:
+                if isinstance(exc_val, Rollback):
                     _log.debug(
                         f"{self._conn}: Explicit rollback from: ",
                         exc_info=True,
                     )
 
                 if self._savepoint_name:
-                    assert self._conn._savepoints is not None, out_of_order_msg
+                    if self._conn._savepoints is None:
+                        raise out_of_order_err
                     actual = self._conn._savepoints.pop()
-                    assert actual == self._savepoint_name, out_of_order_msg
+                    if actual != self._savepoint_name:
+                        raise out_of_order_err
                     self._conn._exec_command(
                         b"rollback to savepoint " + self._savepoint_name + b";"
                         b"release savepoint " + self._savepoint_name
                     )
                 if self._outer_transaction:
-                    assert self._conn._savepoints is not None, out_of_order_msg
-                    assert len(self._conn._savepoints) == 0, out_of_order_msg
+                    if self._conn._savepoints is None:
+                        raise out_of_order_err
+                    if len(self._conn._savepoints) != 0:
+                        raise out_of_order_err
                     self._conn._exec_command(b"rollback")
                     self._conn._savepoints = None
 

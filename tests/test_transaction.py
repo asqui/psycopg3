@@ -1,11 +1,9 @@
 import sys
 from contextlib import contextmanager
-from unittest.mock import patch, call
 
 import pytest
 
-from psycopg3 import OperationalError, ProgrammingError
-from psycopg3.transaction import Rollback
+from psycopg3 import OperationalError, ProgrammingError, Rollback
 
 
 @pytest.fixture(autouse=True)
@@ -39,11 +37,20 @@ def assert_in_transaction(conn):
 
 @contextmanager
 def assert_commands_issued(conn, *commands):
-    with patch.object(conn, "_exec_command") as mock_exec:
+    commands_actual = []
+    real_exec_command = conn._exec_command
+
+    def _exec_command(command):
+        commands_actual.append(command)
+        real_exec_command(command)
+
+    try:
+        conn._exec_command = _exec_command
         yield
-    assert mock_exec.call_args_list == [
-        call(cmd.encode("ascii")) for cmd in commands
-    ]
+    finally:
+        conn._exec_command = real_exec_command
+    commands_expected = [cmd.encode("ascii") for cmd in commands]
+    assert commands_actual == commands_expected
 
 
 class ExpectedException(Exception):
@@ -504,7 +511,6 @@ def test_explicit_rollback_discards_changes(conn, svcconn):
      - Rollback (type)
      - Rollback() (instance)
      - Rollback(tx) (instance initialised with reference to the transaction)
-     - tx.rollback_exception (convenience property that returns Rollback(tx))
     All of these are equivalent.
     """
     tx = conn.transaction()
@@ -512,7 +518,6 @@ def test_explicit_rollback_discards_changes(conn, svcconn):
         Rollback,
         Rollback(),
         Rollback(tx),
-        tx.rollback_exception,
     ):
         with tx:
             insert_row(conn, "foo")
@@ -542,21 +547,15 @@ def test_explicit_rollback_of_outer_transaction(conn):
     """
     Raising a Rollback exception that references an outer transaction will
     discard all changes from both inner and outer transaction blocks.
-
-    This can be raised as:
-    - Rollback(outer_tx); or
-    - outer_tx.rollback_exception
-    Both of these are equivalent.
     """
     outer_tx = conn.transaction()
-    for to_raise in (Rollback(outer_tx), outer_tx.rollback_exception):
-        with outer_tx:
-            insert_row(conn, "outer")
-            with conn.transaction():
-                insert_row(conn, "inner")
-                raise to_raise
-            assert False, "This line of code should be unreachable."
-        assert_rows(conn, set())
+    with outer_tx:
+        insert_row(conn, "outer")
+        with conn.transaction():
+            insert_row(conn, "inner")
+            raise Rollback(outer_tx)
+        assert False, "This line of code should be unreachable."
+    assert_rows(conn, set())
 
 
 def test_explicit_rollback_of_enclosing_tx_outer_tx_unaffected(conn, svcconn):
@@ -569,7 +568,7 @@ def test_explicit_rollback_of_enclosing_tx_outer_tx_unaffected(conn, svcconn):
             insert_row(conn, "enclosing")
             with conn.transaction():
                 insert_row(conn, "inner")
-                raise tx_enclosing.rollback_exception
+                raise Rollback(tx_enclosing)
         insert_row(conn, "outer-after")
 
         assert_rows(conn, {"outer-before", "outer-after"})
@@ -588,7 +587,7 @@ def test_manual_enter_and_exit_out_of_order_exit_asserts(conn, name, exc_info):
     tx1, tx2 = conn.transaction(name), conn.transaction()
     tx1.__enter__()
     tx2.__enter__()
-    with pytest.raises(AssertionError, match="Out-of-order"):
+    with pytest.raises(ProgrammingError, match="Out-of-order"):
         tx1.__exit__(*exc_info)
 
 
@@ -601,7 +600,7 @@ def test_manual_exit_without_enter_asserts(conn, name, exc_info):
     having called __enter__()
     """
     tx = conn.transaction(name)
-    with pytest.raises(AssertionError, match="Out-of-order"):
+    with pytest.raises(ProgrammingError, match="Out-of-order"):
         tx.__exit__(*exc_info)
 
 
@@ -615,5 +614,5 @@ def test_manual_exit_twice_asserts(conn, name, exc_info):
     tx = conn.transaction(name)
     tx.__enter__()
     tx.__exit__(*exc_info)
-    with pytest.raises(AssertionError, match="Out-of-order"):
+    with pytest.raises(ProgrammingError, match="Out-of-order"):
         tx.__exit__(*exc_info)
