@@ -150,5 +150,4 @@ class Transaction:
             args.append(f"savepoint_name={self.savepoint_name!r}")
         if self.force_rollback:
             args.append("force_rollback=True")
-        args = ", ".join(args)
-        return f"{self.__class__.__qualname__}({args})"
+        return f"{self.__class__.__qualname__}({', '.join(args)})"
